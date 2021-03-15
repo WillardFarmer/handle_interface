@@ -364,7 +364,7 @@ void handle_controller::unpack_reply(struct can_frame *packet){
     }
     ROS_INFO("Received message from Handle.");
 
-    can_ros::handle_state handle_state;
+    handle_interface::handle_state handle_state;
 
     // Send raw values to Handle Node
     handle_state.trigger = (packet->data[0] << 8 | packet->data[1]) & 0x03FF;
