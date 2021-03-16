@@ -52,6 +52,15 @@ class handle_controller {
     bool start(int);
 
     private:
+    ros::NodeHandle nh;
+
+    ros::Publisher handle_state_pub;
+    ros::Subscriber hand_state_sub;
+
+    ros::ServiceClient grasp_client;
+    ros::ServiceClient spread_open_client;
+    ros::ServiceClient spread_close_client;
+
     // CAN Methods
     int open_port(const char*);   //TODO: change to voids when exception handling has been added.
     int send_port(struct can_frame*);
@@ -84,17 +93,7 @@ class handle_controller {
     bool last_button_joy;
     bool last_button_push;
 
-    bool test;
-
-
-    ros::NodeHandle nh;
-
-    ros::Publisher handle_state_pub;
-    ros::Subscriber hand_state_sub;
-
-    ros::ServiceClient grasp_client;
-    ros::ServiceClient spread_open_client;
-    ros::ServiceClient spread_close_client;
+    bool led_test;
 
 };
 

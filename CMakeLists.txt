@@ -7,6 +7,7 @@ find_package(catkin REQUIRED COMPONENTS #system
         roslib
         roscpp
         message_generation
+        std_msgs
         wam_srvs
 )
 
@@ -30,3 +31,7 @@ include_directories(
 add_executable(handle_controller src/handle_controller.cpp)
 add_dependencies(handle_controller ${catkin_EXPORTED_TARGETS})
 target_link_libraries(handle_controller ${catkin_LIBRARIES})
+
+add_executable(handle_sim src/handle_sim.cpp)
+add_dependencies(handle_sim ${catkin_EXPORTED_TARGETS})
+target_link_libraries(handle_sim ${catkin_LIBRARIES})

@@ -2,12 +2,6 @@
 
 handle_controller::handle_controller(const char *port) {
 
-    //hand_tgt_set = true;
-    //hand_tgt_pos[0] = 100;
-    //hand_tgt_pos[1] = 100;
-    //hand_tgt_pos[2] = 100;
-    //hand_tgt_pos[3] = 100;
-
     struct can_frame ex;
     ex.can_id = 0x102;
     ex.can_dlc = 8;
@@ -37,7 +31,7 @@ handle_controller::handle_controller(const char *port) {
     last_button_joy = false;
     last_button_push = false;
 
-    test = 0;
+    led_test = 0;
 
 
     //send_port(&ex);
@@ -60,19 +54,6 @@ handle_controller::~handle_controller() {
 
     send_port(&can_msg);
     close_port();
-}
-
-bool handle_controller::start(int rate) {
-    ros::Rate loop_rate(rate);
-    ROS_INFO("Node started");
-
-    while(ros::ok()){
-        send_handle_feedback();
-
-        ros::spinOnce();
-        loop_rate.sleep();
-    }
-
 }
 
 int handle_controller::open_port(const char *port) {
@@ -118,13 +99,13 @@ int handle_controller::send_port(struct can_frame *frame)
     }
     else
     {
-        ROS_INFO("Message successfully sent.");
+        //ROS_INFO("Message successfully sent.");
         return (0);
     }
 }
 
 int handle_controller::read_port() {
-    ROS_INFO("Reading Port");
+    //ROS_INFO("Reading Port");
     struct can_frame frame_rd;
     int recvbytes = 0;
 
@@ -133,10 +114,8 @@ int handle_controller::read_port() {
     //while(read_can_port && (i < 4)){
     do{
         i += 1;
-        if (i > 5){
-            throw std::runtime_error("Reached maximum number of retries.");
-        }
-        ROS_INFO("LOOP, %i", i); // todo make pretty
+        if (i > 1) ROS_INFO("Retry, %i ...", i); // todo make pretty
+        if (i > 5) throw std::runtime_error("Reached maximum number of retries.");
         struct timeval timeout = {1, 0};
         fd_set readSet;
         FD_ZERO(&readSet);
@@ -150,7 +129,7 @@ int handle_controller::read_port() {
             if (FD_ISSET(soc, &readSet)) {
                 recvbytes = read(soc, &frame_rd, sizeof(struct can_frame));
                 if (recvbytes > 0) {
-                    ROS_INFO("Message Found");
+                    //ROS_INFO("Message Found");
                     unpack_reply(&frame_rd);
                     read_can_port = 0;
                 }
@@ -183,7 +162,8 @@ int handle_controller::close_port() {
 ///     finger:      0 = 0
 ///     spread:      0 = 0
 void handle_controller::hand_pos_callback(const sensor_msgs::JointState &msg) {
-    ROS_INFO("Received Barrett Hand Pos message.");
+    //ROS_INFO("Received Barrett Hand Pos message.");
+    /*
     std::cout << "Cur_Sta: ";
     std::cout << hand_state[0] << ", ";
     std::cout << hand_state[1] << ", ";
@@ -194,6 +174,7 @@ void handle_controller::hand_pos_callback(const sensor_msgs::JointState &msg) {
     std::cout << msg.position[1] << ", ";
     std::cout << msg.position[2] << ", ";
     std::cout << msg.position[3] << "\n";
+     */
 
     try {
         // Very basic haptic logic. Will need further development.
@@ -209,16 +190,16 @@ void handle_controller::hand_pos_callback(const sensor_msgs::JointState &msg) {
                     if (hand_tgt_pos[i] < msg.position[i]) continue;
                     a = (hand_tgt_pos[i] - msg.position[i]);
                     diff = a > diff ? a : diff;
-                    std::cout << "a: "<< a << ",  diff: " << diff << "\n";
+                    //std::cout << "a: "<< a << ",  diff: " << diff << "\n";
                 }
             }
-            std::cout << "Final diff: " << diff << "\n";
+            //std::cout << "Final diff: " << diff << "\n";
 
             // Binary Haptic Effort
             // Keep simple for now and make more complex after testing.
             if (diff > 0){
                 haptic_effort = 1;
-                std::cout << "Haptic Effort: " << haptic_effort << "\n";
+                //std::cout << "Haptic Effort: " << haptic_effort << "\n";
             }
         }
 
@@ -238,7 +219,7 @@ void handle_controller::hand_pos_callback(const sensor_msgs::JointState &msg) {
 
 void handle_controller::send_handle_feedback() {
 
-    ROS_INFO("Sending Handle Feedback");
+    //ROS_INFO("Sending Handle Feedback");
 
     // Convert Haptic Effort Value to Byte
     double a;
@@ -249,20 +230,21 @@ void handle_controller::send_handle_feedback() {
     }
     a = haptic_effort*(HAP_MAX - HAP_MIN) + HAP_MIN; // Scale effort between max and min
 
-    std::cout << unsigned(a) << std::endl;
+    //std::cout << unsigned(a) << std::endl;
 
     effort = (uint8_t)round(a/100 * (255)); // convert to uint8_t
-    std::cout << unsigned(effort) << std::endl;
+    //std::cout << unsigned(effort) << std::endl;
 
     // Set LED and Tx/Rx
     uint8_t data_bits = 0x0;
     data_bits = data_bits | TXRX_TRANSMIT;
-    if(handle_led_set || test){
+    //if(handle_led_set || led_test){
+    if(handle_led_set){
         data_bits = data_bits | LED_MASK;
     }
-    test = !test;
+    //led_test = !led_test;
 
-    std::cout<< "EFFORT: " << unsigned(effort) << ", " << unsigned(data_bits) << std::endl;
+    //std::cout<< "EFFORT: " << unsigned(effort) << ", " << unsigned(data_bits) << std::endl;
 
     struct can_frame can_msg;
     can_msg.can_id = HANDLE_ID;
@@ -362,7 +344,7 @@ void handle_controller::unpack_reply(struct can_frame *packet){
         ROS_INFO("Received message with an unrecognized ID. Ignoring...");
         return;
     }
-    ROS_INFO("Received message from Handle.");
+    //ROS_INFO("Received message from Handle.");
 
     handle_interface::handle_state handle_state;
 
@@ -374,16 +356,19 @@ void handle_controller::unpack_reply(struct can_frame *packet){
     handle_state.button_push = packet->data[7] & PUSH_BUTTON_MASK;
 
     //Print Message
+    /*
     std::cout << "CAN Message received.\n";
     for(int i=0; i<8; i++){
         std::cout << "Byte " << i << ": 0x" << std::hex << (int)packet->data[i] << std::endl;
     }
+    */
     std::cout << "Trigger: " << (int) handle_state.trigger << std::endl;
     std::cout << "Joy1   : " << (int) handle_state.joy1 << std::endl;
     std::cout << "Joy2   : " << (int) handle_state.joy2 << std::endl;
     std::cout << "B_Joy  : " << (int) handle_state.button_joy << std::endl;
     std::cout << "B_Push : " << (int) handle_state.button_push << std::endl;
 
+    /*
     bool txrx = packet->data[7] & TXRX_MASK;
     std::cout << "TXRX   : " << (int) txrx << std::endl;
     if (txrx != TXRX_RECIEVE){
@@ -391,13 +376,34 @@ void handle_controller::unpack_reply(struct can_frame *packet){
         ROS_ERROR("Received a 'transmit' handle CAN message when a 'receive' message was expected.");
     }
     ROS_INFO("Processing stuff.....");
+    */
 
-    /*
     process_button_push((bool)handle_state.button_push);
     process_trigger(handle_state.trigger);
     process_joy(handle_state.joy1, handle_state.joy2);
     process_button_joy((bool)handle_state.button_joy);
+
+}
+
+bool handle_controller::start(int rate) {
+    ros::Rate loop_rate(rate);
+    ROS_INFO("Node started");
+
+    /*
+    std_srvs::Empty srv1;
+    wam_srvs::BHandGraspPos srv2;
+    spread_open_client.call(srv1);
+    spread_close_client.call(srv1);
+    srv2.request.radians = 2.1223 / 1023 * 0x3ff;
+    grasp_client.call(srv2);
      */
+
+    while(ros::ok()){
+        send_handle_feedback();
+
+        ros::spinOnce();
+        loop_rate.sleep();
+    }
 
 }
 
