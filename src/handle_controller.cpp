@@ -1,19 +1,14 @@
 #include <handle_controller.h>
 
-handle_controller::handle_controller(const char *port) {
-
-    struct can_frame ex;
-    ex.can_id = 0x102;
-    ex.can_dlc = 8;
-    ex.data[0] = 0x00;
-    ex.data[1] = 0x00;
-    ex.data[2] = 0x00;
-    ex.data[3] = 0x00;
-    ex.data[4] = 0x00;
-    ex.data[5] = 0x00;
-    ex.data[6] = 0x00;
-    ex.data[7] = 0x00;
-    //unpack_reply(&ex);
+handle_controller::handle_controller(const char *port) :
+        handle_led_set(false),
+        hand_lock(false),
+        spread_pos(0),
+        last_button_joy(false),
+        last_button_push(false),
+        timer_joy(0.5),
+        timer_push(0.5),
+        test(0){
 
     this->open_port(port);
 
@@ -23,19 +18,6 @@ handle_controller::handle_controller(const char *port) {
     grasp_client = nh.serviceClient<wam_srvs::BHandGraspPos>("grasp_pos");
     spread_open_client = nh.serviceClient<std_srvs::Empty>("open_spread");
     spread_close_client = nh.serviceClient<std_srvs::Empty>("close_spread");
-
-    handle_led_set = false;
-
-    hand_lock = false;
-    spread_pos = 0;  //spread has not been set
-    last_button_joy = false;
-    last_button_push = false;
-
-    led_test = 0;
-
-
-    //send_port(&ex);
-    //read_port();
 }
 
 handle_controller::~handle_controller() {
@@ -56,8 +38,7 @@ handle_controller::~handle_controller() {
     close_port();
 }
 
-int handle_controller::open_port(const char *port) {
-
+void handle_controller::open_port(const char *port) {
     ROS_INFO("Opening CAN port");
 
     struct ifreq ifr;
@@ -71,76 +52,63 @@ int handle_controller::open_port(const char *port) {
 
     addr.can_family = AF_CAN;
     strcpy(ifr.ifr_name, port);
-
     if(ioctl(soc, SIOCGIFINDEX, &ifr) < 0) {
         throw std::runtime_error("Could not retrieve interface index.");
     }
 
     addr.can_ifindex = ifr.ifr_ifindex;
-
     fcntl(soc, F_SETFL, O_NONBLOCK);
-
     if(bind(soc, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
         throw std::runtime_error("Could not bind socket to CAN interface.");
     }
-    return 0;
 }
 
-int handle_controller::send_port(struct can_frame *frame)
+void handle_controller::send_port(struct can_frame *frame)
 {
     int retval;
     retval = write(soc, frame, sizeof(struct can_frame));
     if (retval != sizeof(struct can_frame))
     {
-        //std::cout << soc << ", " << retval << std::endl;
-        //std::cout << errno << std::endl;
         throw std::runtime_error("Could not write to port.");
-        return (-1);
     }
     else
     {
-        //ROS_INFO("Message successfully sent.");
-        return (0);
+        ROS_DEBUG("CAN Message successfully sent.");
     }
 }
 
-int handle_controller::read_port() {
-    //ROS_INFO("Reading Port");
+bool handle_controller::read_port() {
+    ROS_DEBUG("Reading Port");
     struct can_frame frame_rd;
     int recvbytes = 0;
 
     int i = 0;
-    int read_can_port = 1;
-    //while(read_can_port && (i < 4)){
+    bool read_can_port = true;
     do{
         i += 1;
-        if (i > 1) ROS_INFO("Retry, %i ...", i); // todo make pretty
-        if (i > 5) throw std::runtime_error("Reached maximum number of retries.");
         struct timeval timeout = {1, 0};
         fd_set readSet;
         FD_ZERO(&readSet);
         FD_SET(soc, &readSet);
 
         if (select((soc + 1), &readSet, NULL, NULL, &timeout) >= 0) {
-//            if (!read_can_port)
-//            {
-//                break;
-//            }
             if (FD_ISSET(soc, &readSet)) {
                 recvbytes = read(soc, &frame_rd, sizeof(struct can_frame));
                 if (recvbytes > 0) {
-                    //ROS_INFO("Message Found");
+                    ROS_DEBUG("CAN message Found");
                     unpack_reply(&frame_rd);
-                    read_can_port = 0;
+                    read_can_port = false;
                 }
             }
         }
-    } while(read_can_port);
+    } while((i<3) && read_can_port && ros::ok());
+    return !read_can_port;
 }
 
-int handle_controller::close_port() {
+
+void handle_controller::close_port() {
+    ROS_INFO("Closing CAN Port.");
     close(soc);
-    return 0;
 }
 
 /// JOINT STATE STRUCTURE //
@@ -162,7 +130,7 @@ int handle_controller::close_port() {
 ///     finger:      0 = 0
 ///     spread:      0 = 0
 void handle_controller::hand_pos_callback(const sensor_msgs::JointState &msg) {
-    //ROS_INFO("Received Barrett Hand Pos message.");
+    ROS_DEBUG("Received Barrett Hand Pos message.");
     /*
     std::cout << "Cur_Sta: ";
     std::cout << hand_state[0] << ", ";
@@ -218,8 +186,7 @@ void handle_controller::hand_pos_callback(const sensor_msgs::JointState &msg) {
 }
 
 void handle_controller::send_handle_feedback() {
-
-    //ROS_INFO("Sending Handle Feedback");
+    ROS_DEBUG("Sending Handle Feedback");
 
     // Convert Haptic Effort Value to Byte
     double a;
@@ -229,22 +196,16 @@ void handle_controller::send_handle_feedback() {
         haptic_effort = 0;
     }
     a = haptic_effort*(HAP_MAX - HAP_MIN) + HAP_MIN; // Scale effort between max and min
-
-    //std::cout << unsigned(a) << std::endl;
-
     effort = (uint8_t)round(a/100 * (255)); // convert to uint8_t
-    //std::cout << unsigned(effort) << std::endl;
 
     // Set LED and Tx/Rx
     uint8_t data_bits = 0x0;
     data_bits = data_bits | TXRX_TRANSMIT;
-    //if(handle_led_set || led_test){
     if(handle_led_set){
         data_bits = data_bits | LED_MASK;
     }
-    //led_test = !led_test;
 
-    //std::cout<< "EFFORT: " << unsigned(effort) << ", " << unsigned(data_bits) << std::endl;
+    if(test > 255) test = 0;
 
     struct can_frame can_msg;
     can_msg.can_id = HANDLE_ID;
@@ -253,13 +214,19 @@ void handle_controller::send_handle_feedback() {
     can_msg.data[1] = 0x00;
     can_msg.data[2] = 0x00;
     can_msg.data[3] = 0x00;
-    can_msg.data[4] = effort;
-    can_msg.data[5] = 0x00;
+    can_msg.data[4] = 0x00;//effort;
+    can_msg.data[5] = test;//0x00;
     can_msg.data[6] = 0x00;
     can_msg.data[7] = data_bits;
 
-    send_port(&can_msg);
-    read_port();
+    test+=1;
+
+    for(int i=1; (i < 5) && ros::ok(); i++){
+        send_port(&can_msg);
+        if(read_port()) return;
+        ROS_ERROR("Failed to receive CAN message from handle. Retrying %i ...", i);
+    }
+    throw std::runtime_error("Reached maximum number of retries.");
 }
 
 /// Trigger Logic
@@ -293,8 +260,9 @@ void handle_controller::process_joy(int joy1, int joy2){
 /// True  - Button is depressed.
 /// False - Button is released.
 void handle_controller::process_button_joy(bool button_joy){
-    // Trigger toggle on rising edge of button press action.
-    if(button_joy && !last_button_joy && !hand_lock){
+    // Trigger toggle on rising edge of button press action with "last_button_joy".
+    if(button_joy && !last_button_joy && !hand_lock && timer_joy.isReady()){
+        timer_joy.set();
         std_srvs::Empty srv;
 
         if (spread_pos < 0){
@@ -330,7 +298,8 @@ void handle_controller::process_button_joy(bool button_joy){
 /// False - Button is released.
 void handle_controller::process_button_push(bool button_push){
     // Trigger toggle on rising edge of button press action.
-    if(button_push && !last_button_push){
+    if(button_push && !last_button_push && timer_push.isReady()){
+        timer_push.set();
         hand_lock = !hand_lock;
         handle_led_set = !handle_led_set;
     }
@@ -361,7 +330,7 @@ void handle_controller::unpack_reply(struct can_frame *packet){
     for(int i=0; i<8; i++){
         std::cout << "Byte " << i << ": 0x" << std::hex << (int)packet->data[i] << std::endl;
     }
-    */
+    /
     std::cout << "Trigger: " << (int) handle_state.trigger << std::endl;
     std::cout << "Joy1   : " << (int) handle_state.joy1 << std::endl;
     std::cout << "Joy2   : " << (int) handle_state.joy2 << std::endl;

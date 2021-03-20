@@ -7,25 +7,17 @@
 #include <net/if.h>
 #include <linux/can.h>
 #include <linux/can/raw.h>
-#include <handle_interface/handle_state.h>
+#include <libsocketcan.h>
 
 #include <ros/ros.h>
-#include <cmath>
-
-#include <libsocketcan.h>
-#include <eigen3/Eigen/Dense>
-
-//#include <math_utilities.h>
-
+#include <handle_interface/handle_state.h>
 #include "std_msgs/String.h"
 #include "sensor_msgs/JointState.h"
-
 #include "wam_srvs/BHandGraspPos.h"
 #include "wam_srvs/BHandSpreadPos.h"
 #include "std_srvs/Empty.h"
 
-//#include<errno.h>
-//extern int errno;
+#include "debounce_timer.h"
 
 // Handle constants
 #define HANDLE_ID 0x102
@@ -62,18 +54,15 @@ class handle_controller {
     ros::ServiceClient spread_close_client;
 
     // CAN Methods
-    int open_port(const char*);   //TODO: change to voids when exception handling has been added.
-    int send_port(struct can_frame*);
-    int read_port();
-    int close_port();
+    void open_port(const char*);   //TODO: change to voids when exception handling has been added.
+    void send_port(struct can_frame*);
+    bool read_port();
+    void close_port();
     void unpack_reply(struct can_frame*);
 
     // Handle Methods
     void send_handle_feedback();
-    //void send_hand_tgt();
     void hand_pos_callback(const sensor_msgs::JointState&);
-    //void update_hand_pos();
-    //void calculate_handle_feedback();
 
     void process_trigger(int);
     void process_joy(int, int);
@@ -92,10 +81,10 @@ class handle_controller {
     int spread_pos;         // 1 (open), 0 (unset), -1 (closed)
     bool last_button_joy;
     bool last_button_push;
+    debounce_timer timer_joy;
+    debounce_timer timer_push;
 
-    bool led_test;
-
+    uint8_t test;
 };
-
 
 #endif //SRC_HANDLE_CONTROLLER_H

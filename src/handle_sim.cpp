@@ -47,23 +47,12 @@ bool handle_sim::handGraspPos(wam_srvs::BHandGraspPos::Request &req, wam_srvs::B
     return true;
 }
 
-void handle_sim::run(){
-    ros::Rate loop_rate(200);
-
-    /*
-    while(ros::ok()){
-        ros::spinOnce();
-        loop_rate.sleep();
-    }
-     */
-    ros::spin();
-}
-
 int main(int argc, char **argv){
     ros::init(argc,argv, "handle_sim");
     ROS_INFO("Node Started...");
     handle_sim hSim;
-    hSim.run();
+    ros::Rate loop_rate(200);
+    ros::spin();
 
     return 0;
 }

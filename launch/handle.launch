@@ -1,0 +1,6 @@
+<!-- lpetrich 17/06/19 -->
+
+<launch>
+	<node pkg="handle_interface" type="handle_controller" name="handle_controller" output="screen" respawn="false"/>
+	<node pkg="handle_interface" type="handle_sim" name="handle_sim" output="log" respawn="false"/>
+</launch>
