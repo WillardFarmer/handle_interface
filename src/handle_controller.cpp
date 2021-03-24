@@ -12,6 +12,9 @@ handle_controller::handle_controller(const char *port) :
 
     this->open_port(port);
 
+    // for testing
+    handle_state_pub = nh.advertise<handle_interface::handle_state>("/handle_state", 10);
+
     hand_state_sub = nh.subscribe("joint_states", 1,
                                   &handle_controller::hand_pos_callback, this);
 
@@ -86,7 +89,7 @@ bool handle_controller::read_port() {
     bool read_can_port = true;
     do{
         i += 1;
-        struct timeval timeout = {1, 0};
+        struct timeval timeout = {0, 100000};
         fd_set readSet;
         FD_ZERO(&readSet);
         FD_SET(soc, &readSet);
@@ -205,7 +208,7 @@ void handle_controller::send_handle_feedback() {
         data_bits = data_bits | LED_MASK;
     }
 
-    if(test > 255) test = 0;
+    //if(test > 255) test = 0;
 
     struct can_frame can_msg;
     can_msg.can_id = HANDLE_ID;
@@ -215,16 +218,16 @@ void handle_controller::send_handle_feedback() {
     can_msg.data[2] = 0x00;
     can_msg.data[3] = 0x00;
     can_msg.data[4] = 0x00;//effort;
-    can_msg.data[5] = test;//0x00;
+    can_msg.data[5] = 0x00;
     can_msg.data[6] = 0x00;
     can_msg.data[7] = data_bits;
 
-    test+=1;
+    //test+=1;
 
     for(int i=1; (i < 5) && ros::ok(); i++){
         send_port(&can_msg);
         if(read_port()) return;
-        ROS_ERROR("Failed to receive CAN message from handle. Retrying %i ...", i);
+        ROS_WARN("Failed to receive CAN message from handle. Retrying %i ...", i);
     }
     throw std::runtime_error("Reached maximum number of retries.");
 }
@@ -284,7 +287,7 @@ void handle_controller::process_button_joy(bool button_joy){
             }
         }
         else{
-            ROS_INFO("No position message has been recieved. Push button will be ignored.");
+            ROS_INFO("No position message has been received. Push button will be ignored.");
         }
     }
     last_button_joy = button_joy;
@@ -330,7 +333,7 @@ void handle_controller::unpack_reply(struct can_frame *packet){
     for(int i=0; i<8; i++){
         std::cout << "Byte " << i << ": 0x" << std::hex << (int)packet->data[i] << std::endl;
     }
-    /
+    */
     std::cout << "Trigger: " << (int) handle_state.trigger << std::endl;
     std::cout << "Joy1   : " << (int) handle_state.joy1 << std::endl;
     std::cout << "Joy2   : " << (int) handle_state.joy2 << std::endl;
@@ -346,6 +349,7 @@ void handle_controller::unpack_reply(struct can_frame *packet){
     }
     ROS_INFO("Processing stuff.....");
     */
+    handle_state_pub.publish(handle_state);
 
     process_button_push((bool)handle_state.button_push);
     process_trigger(handle_state.trigger);
@@ -358,29 +362,19 @@ bool handle_controller::start(int rate) {
     ros::Rate loop_rate(rate);
     ROS_INFO("Node started");
 
-    /*
-    std_srvs::Empty srv1;
-    wam_srvs::BHandGraspPos srv2;
-    spread_open_client.call(srv1);
-    spread_close_client.call(srv1);
-    srv2.request.radians = 2.1223 / 1023 * 0x3ff;
-    grasp_client.call(srv2);
-     */
-
     while(ros::ok()){
         send_handle_feedback();
 
         ros::spinOnce();
         loop_rate.sleep();
     }
-
 }
 
 int main(int argc, char **argv){
     ros::init(argc, argv, "handle_controller");
     try{
         handle_controller handle("can0");
-        handle.start(10);
+        handle.start(100);
     }catch(const std::exception &e){
         std::cout<< "\033[1;31m[ERROR] An exception was caught, with message: ";
         std::cout<< e.what() << std::endl;

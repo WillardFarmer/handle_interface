@@ -21,6 +21,8 @@
 
 // Handle constants
 #define HANDLE_ID 0x102
+//#define HANDLE_ID 0x111201c2
+//#define HANDLE_ID 0x1c2
 #define JOYSTICK_BUTTON_MASK 0x08
 #define PUSH_BUTTON_MASK 0x04
 #define LED_MASK 0x02
