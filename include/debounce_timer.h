@@ -31,10 +31,4 @@ bool debounce_timer::isReady() {
     double time_diff = ros::Time::now().toSec() - _start_time;
     return time_diff > _duration;
 }
-
-
-
-
-
-
 #endif //SRC_DEBOUNCE_TIMER_H

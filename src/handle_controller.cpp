@@ -1,26 +1,30 @@
 #include <handle_controller.h>
+#include <std_msgs/Float64.h>
 
 handle_controller::handle_controller(const char *port) :
         handle_led_set(false),
         hand_lock(false),
+        haptic_effort(0),
         spread_pos(0),
         last_button_joy(false),
         last_button_push(false),
         timer_joy(0.5),
         timer_push(0.5),
+        filtered_trigger(5),
         test(0){
 
     this->open_port(port);
 
-    // for testing
     handle_state_pub = nh.advertise<handle_interface::handle_state>("/handle_state", 10);
-
-    hand_state_sub = nh.subscribe("joint_states", 1,
+    hand_state_sub = nh.subscribe("joint_states_sim", 1,
                                   &handle_controller::hand_pos_callback, this);
 
     grasp_client = nh.serviceClient<wam_srvs::BHandGraspPos>("grasp_pos");
     spread_open_client = nh.serviceClient<std_srvs::Empty>("open_spread");
     spread_close_client = nh.serviceClient<std_srvs::Empty>("close_spread");
+
+    pb_fil = nh.advertise<std_msgs::Float64>("/handle_fil",1);
+    pb_raw = nh.advertise<std_msgs::Float64>("/handle_raw",1);
 }
 
 handle_controller::~handle_controller() {
@@ -89,7 +93,7 @@ bool handle_controller::read_port() {
     bool read_can_port = true;
     do{
         i += 1;
-        struct timeval timeout = {0, 100000};
+        struct timeval timeout = {0, 10000};
         fd_set readSet;
         FD_ZERO(&readSet);
         FD_SET(soc, &readSet);
@@ -145,32 +149,44 @@ void handle_controller::hand_pos_callback(const sensor_msgs::JointState &msg) {
     std::cout << msg.position[1] << ", ";
     std::cout << msg.position[2] << ", ";
     std::cout << msg.position[3] << "\n";
-     */
+    std::cout << "Diff" << std::endl;
+    std::cout << abs(hand_tgt_pos[0] - msg.position[0]) << ", \n";
+    std::cout << abs(hand_tgt_pos[1] - msg.position[1]) << ", \n";
+    std::cout << abs(hand_tgt_pos[2] - msg.position[2]) << ", \n";
+    std::cout << abs(hand_tgt_pos[3] - msg.position[3]) << "\n";
+    */
+
+    std_msgs::Float64 a; a.data = hand_tgt_pos[0];
+    std_msgs::Float64 b; b.data = msg.position[0];
+
+    pb_fil.publish(a);
+    pb_raw.publish(b);
 
     try {
         // Very basic haptic logic. Will need further development.
         if (hand_tgt_set) {
-            double diff = 0;
+            double max_diff = 0;
 
             for (int i = 0; i < 3; i++) {
                 // If finger has not moved. 31*100 * 2.1223/17000 * 1/10 = 0.0387 rad/pub
                 // This number is the angle a finger should have moved since the last pos message.
                 // * 0.1 is a scaling factor to ensure the finger is stopped or very slow.
                 if( abs(hand_state[i] - msg.position[i]) < (0.0387 * 0.1) ) {
-                    double a = 0;
                     if (hand_tgt_pos[i] < msg.position[i]) continue;
-                    a = (hand_tgt_pos[i] - msg.position[i]);
-                    diff = a > diff ? a : diff;
-                    //std::cout << "a: "<< a << ",  diff: " << diff << "\n";
+                    double diff = (hand_tgt_pos[i] - msg.position[i]);
+                    max_diff = diff > max_diff ? diff : max_diff;
+                    //std::cout << "diff: " << diff << ",  max_diff: " << max_diff << "\n";
                 }
             }
-            //std::cout << "Final diff: " << diff << "\n";
+            //std::cout << "Final max_diff: " << max_diff << "\n";
 
             // Binary Haptic Effort
             // Keep simple for now and make more complex after testing.
-            if (diff > 0){
+            if (max_diff > 10 * 2.1223 / 1024){
                 haptic_effort = 1;
                 //std::cout << "Haptic Effort: " << haptic_effort << "\n";
+            }else{
+                haptic_effort = 0;
             }
         }
 
@@ -194,12 +210,15 @@ void handle_controller::send_handle_feedback() {
     // Convert Haptic Effort Value to Byte
     double a;
     uint8_t effort;
-    haptic_effort += 1;
+    /*
+    haptic_effort += 0.5; // Previously 1
     if(haptic_effort > 1){
         haptic_effort = 0;
     }
+     */
     a = haptic_effort*(HAP_MAX - HAP_MIN) + HAP_MIN; // Scale effort between max and min
     effort = (uint8_t)round(a/100 * (255)); // convert to uint8_t
+    //std::cout << "Effort: " << (int)effort << std::endl;
 
     // Set LED and Tx/Rx
     uint8_t data_bits = 0x0;
@@ -207,8 +226,7 @@ void handle_controller::send_handle_feedback() {
     if(handle_led_set){
         data_bits = data_bits | LED_MASK;
     }
-
-    //if(test > 255) test = 0;
+    //std::cout << a << std::endl;
 
     struct can_frame can_msg;
     can_msg.can_id = HANDLE_ID;
@@ -217,14 +235,13 @@ void handle_controller::send_handle_feedback() {
     can_msg.data[1] = 0x00;
     can_msg.data[2] = 0x00;
     can_msg.data[3] = 0x00;
-    can_msg.data[4] = 0x00;//effort;
+    can_msg.data[4] = effort;
     can_msg.data[5] = 0x00;
     can_msg.data[6] = 0x00;
     can_msg.data[7] = data_bits;
 
-    //test+=1;
 
-    for(int i=1; (i < 5) && ros::ok(); i++){
+    for(int i=1; (i < 10) && ros::ok(); i++){
         send_port(&can_msg);
         if(read_port()) return;
         ROS_WARN("Failed to receive CAN message from handle. Retrying %i ...", i);
@@ -237,12 +254,27 @@ void handle_controller::send_handle_feedback() {
 ///           to 0-2.1223rad. 0x0000 from the handle is fully open and 0x03ff is
 ///           fully closed.
 void handle_controller::process_trigger(int trigger){
+    if((trigger < 0) || (trigger > 1023)){
+        ROS_ERROR("Received an invalid trigger value: %i", trigger);
+    }
+    std_msgs::Float64 test_msg;
+    test_msg.data = (float)(2.1223 / 1023 * (double)trigger);
+    //pb_raw.publish(test_msg);
+
+    float a_test = filtered_trigger.get_median((float)(2.1223 / 1023 * (double)trigger));
+
+    test_msg.data = a_test;
+    //pb_fil.publish(test_msg);
+
+    hand_tgt_pos[0] = a_test;
+    hand_tgt_pos[1] = a_test;
+    hand_tgt_pos[2] = a_test;
+
+    // Even if hand is locked we should continue feeding values to the filter.
+    wam_srvs::BHandGraspPos srv;
+    //srv.request.radians = filtered_trigger.get_median((float)(2.1223 / 1023 * (double)trigger));
+    srv.request.radians = a_test;
     if(!hand_lock) {
-        if((trigger < 0) || (trigger > 1023)){
-            ROS_ERROR("Received an invalid trigger value: %i", trigger);
-        }
-        wam_srvs::BHandGraspPos srv;
-        srv.request.radians = 2.1223 / 1023 * (float)trigger;
         if(!grasp_client.call(srv)){
             ROS_ERROR("Failed to call service: grasp_pos");
         }
@@ -254,6 +286,7 @@ void handle_controller::process_trigger(int trigger){
 /// Function: Currently there is no functionality for the joystick. In the future,
 ///           the joystick may be used to control a cursor on the host computer.
 void handle_controller::process_joy(int joy1, int joy2){
+    // consider using filtered trigger
 }
 
 /// Joystick Button Logic
@@ -301,12 +334,16 @@ void handle_controller::process_button_joy(bool button_joy){
 /// False - Button is released.
 void handle_controller::process_button_push(bool button_push){
     // Trigger toggle on rising edge of button press action.
+    // TODO: Weird flashing bug here. When button is held LED changes.
     if(button_push && !last_button_push && timer_push.isReady()){
+        ROS_INFO("Butt");
         timer_push.set();
         hand_lock = !hand_lock;
         handle_led_set = !handle_led_set;
     }
-    last_button_joy = button_push;
+    std::cout << "button is push: " << ((last_button_push) ? "True\n" : "False\n");
+    std::cout << "timer is ready: " << ((timer_push.isReady()) ? "True\n" : "False\n");
+    last_button_push = button_push;
 }
 
 /// CAN PACKET STRUCTURE //
@@ -333,22 +370,22 @@ void handle_controller::unpack_reply(struct can_frame *packet){
     for(int i=0; i<8; i++){
         std::cout << "Byte " << i << ": 0x" << std::hex << (int)packet->data[i] << std::endl;
     }
-    */
+    *
     std::cout << "Trigger: " << (int) handle_state.trigger << std::endl;
     std::cout << "Joy1   : " << (int) handle_state.joy1 << std::endl;
     std::cout << "Joy2   : " << (int) handle_state.joy2 << std::endl;
     std::cout << "B_Joy  : " << (int) handle_state.button_joy << std::endl;
     std::cout << "B_Push : " << (int) handle_state.button_push << std::endl;
 
-    /*
+    /*j
     bool txrx = packet->data[7] & TXRX_MASK;
     std::cout << "TXRX   : " << (int) txrx << std::endl;
     if (txrx != TXRX_RECIEVE){
         //This should never happen but may be good for error correcting
         ROS_ERROR("Received a 'transmit' handle CAN message when a 'receive' message was expected.");
     }
-    ROS_INFO("Processing stuff.....");
-    */
+     */
+    hand_tgt_set = true;
     handle_state_pub.publish(handle_state);
 
     process_button_push((bool)handle_state.button_push);

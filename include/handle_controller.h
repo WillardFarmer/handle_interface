@@ -18,6 +18,7 @@
 #include "std_srvs/Empty.h"
 
 #include "debounce_timer.h"
+#include "median_filter.h"
 
 // Handle constants
 #define HANDLE_ID 0x102
@@ -29,7 +30,7 @@
 #define TXRX_MASK 0x01
 #define TXRX_TRANSMIT 0
 #define TXRX_RECIEVE 1
-#define HAP_MAX 50
+#define HAP_MAX 25
 #define HAP_MIN 0
 
 #define FINGER_OPEN_TARGET 0         // [rad]
@@ -85,6 +86,14 @@ class handle_controller {
     bool last_button_push;
     debounce_timer timer_joy;
     debounce_timer timer_push;
+    median_filter filtered_trigger;
+    //median_filter filtered_joy1;
+    //median_filter filtered_joy2;
+
+    //testing
+    ros::Publisher pb_fil;
+    ros::Publisher pb_raw;
+
 
     uint8_t test;
 };
