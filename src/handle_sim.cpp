@@ -1,9 +1,6 @@
 #include <handle_sim.h>
 
-handle_sim::handle_sim(jointStruct obstacle) :
-        obstacle(obstacle),
-        joint_pos({0,0,0,0,0})
-{
+handle_sim::handle_sim() : joint_pos({0,0,0,0,0}) {
 
     joint_sub = nh.subscribe("/joint_states",100,&handle_sim::jointStateCallback,this);
     joint_pub = nh.advertise<sensor_msgs::JointState>("joint_states_sim", 1);
@@ -14,9 +11,10 @@ handle_sim::handle_sim(jointStruct obstacle) :
     j22_pub = nh.advertise<std_msgs::Float64>("bh_j22_position_controller/command", 1);
     j32_pub = nh.advertise<std_msgs::Float64>("bh_j32_position_controller/command", 1);
 
+    hand_grsp_pos_srv   = nh.advertiseService("grasp_pos",    &handle_sim::handGraspPos, this);
+    hand_sprd_pos_srv   = nh.advertiseService("spread_pos",   &handle_sim::handSpreadPos, this);
     hand_open_sprd_srv  = nh.advertiseService("open_spread",  &handle_sim::handOpenSpread, this);
     hand_close_sprd_srv = nh.advertiseService("close_spread", &handle_sim::handCloseSpread, this);
-    hand_grsp_pos_srv   = nh.advertiseService("grasp_pos",    &handle_sim::handGraspPos, this);
 }
 
 handle_sim::~handle_sim() {}
@@ -77,14 +75,25 @@ bool handle_sim::handCloseSpread(std_srvs::Empty::Request &req, std_srvs::Empty:
     return true;
 }
 
+bool handle_sim::handSpreadPos(wam_srvs::BHandSpreadPos::Request &req, wam_srvs::BHandSpreadPos::Response &res) {
+    //ROS_INFO("Grasp Position Request %f", req.radians);
+
+    std_msgs::Float64 msg1, msg2;
+    msg1.data = (req.radians < obstacle.j11) ? req.radians : obstacle.j11;
+    msg2.data = (req.radians < obstacle.j21) ? req.radians : obstacle.j21;
+
+    j11_pub.publish(msg1);
+    j21_pub.publish(msg2);
+
+    return true;
+}
+
 bool handle_sim::handGraspPos(wam_srvs::BHandGraspPos::Request &req, wam_srvs::BHandGraspPos::Response &res) {
     //ROS_INFO("Grasp Position Request %f", req.radians);
     std_msgs::Float64 msg1, msg2, msg3;
     msg1.data = (req.radians < obstacle.j12) ? req.radians : obstacle.j12;
     msg2.data = (req.radians < obstacle.j22) ? req.radians : obstacle.j22;
     msg3.data = (req.radians < obstacle.j32) ? req.radians : obstacle.j32;
-
-    std::cout << req.radians << ", " << obstacle.j12 << ", " << msg1.data << std::endl;
 
     j12_pub.publish(msg1);
     j22_pub.publish(msg2);
@@ -93,24 +102,26 @@ bool handle_sim::handGraspPos(wam_srvs::BHandGraspPos::Request &req, wam_srvs::B
 }
 
 void handle_sim::start() {
-    ros::Rate loop_rate(100);
-    while(ros::ok()){
-        ros::spinOnce();
-        loop_rate.sleep();
-    }
+    ROS_INFO("Node Started...");
+
+    // Please set good obstacle values. I don't have time for error correction.
+    nh.param<double>("/handle_sim/j11", obstacle.j11, 3.14157);
+    nh.param<double>("/handle_sim/j21", obstacle.j21, 3.14157);
+    nh.param<double>("/handle_sim/j12", obstacle.j12, 3.14157);
+    nh.param<double>("/handle_sim/j22", obstacle.j22, 3.14157);
+    nh.param<double>("/handle_sim/j32", obstacle.j32, 3.14157);
+
+    ros::spin();
 }
 
 int main(int argc, char **argv){
     try {
         ros::init(argc, argv, "handle_sim");
-        ROS_INFO("Node Started...");
-        // Please give good obstacle values. I don't have time for error correction.
-        //jointStruct obs{.j11 = 3.14157, .j21 = 3.14157, .j12 = 3.14157, .j22 = 3.14157, .j32 = 3.14157}; // DO NOT change order
-        jointStruct obs{.j11 = 3.14157, .j21 = 3.14157, .j12 = 1, .j22 = 1, .j32 = 1}; // DO NOT change order
-        handle_sim hSim(obs);
+        handle_sim hSim;
         hSim.start();
-    }catch(std::exception e){
-        std::cout << e.what() << std::endl;
+    }catch(std::exception &e){
+        std::cout<< "\033[1;31m[ERROR] An exception was caught, with message: ";
+        std::cout<< e.what() << std::endl;
     }
 
     return 0;

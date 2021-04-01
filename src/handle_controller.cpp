@@ -3,28 +3,37 @@
 
 handle_controller::handle_controller(const char *port) :
         handle_led_set(false),
+        hand_state_set(false),
+        hand_tgt_set(false),
         hand_lock(false),
         haptic_effort(0),
-        spread_pos(0),
+        //spread_pos(0),
         last_button_joy(false),
         last_button_push(false),
         timer_joy(0.5),
         timer_push(0.5),
         filtered_trigger(5),
+        filtered_joy1(5),
+        filtered_joy2(5),
         test(0){
 
     this->open_port(port);
 
+    // For data visualisation
+    hand_tgt_pub = nh.advertise<std_msgs::Float64MultiArray>("/hand_target", 10);
+    handle_haptic_effort = nh.advertise<std_msgs::Float64>("/handle_haptic_effort", 10);
     handle_state_pub = nh.advertise<handle_interface::handle_state>("/handle_state", 10);
     hand_state_sub = nh.subscribe("joint_states_sim", 1,
                                   &handle_controller::hand_pos_callback, this);
 
     grasp_client = nh.serviceClient<wam_srvs::BHandGraspPos>("grasp_pos");
+    spread_client = nh.serviceClient<wam_srvs::BHandSpreadPos>("spread_pos");
     spread_open_client = nh.serviceClient<std_srvs::Empty>("open_spread");
     spread_close_client = nh.serviceClient<std_srvs::Empty>("close_spread");
 
     pb_fil = nh.advertise<std_msgs::Float64>("/handle_fil",1);
     pb_raw = nh.advertise<std_msgs::Float64>("/handle_raw",1);
+
 }
 
 handle_controller::~handle_controller() {
@@ -138,29 +147,14 @@ void handle_controller::close_port() {
 ///     spread:      0 = 0
 void handle_controller::hand_pos_callback(const sensor_msgs::JointState &msg) {
     ROS_DEBUG("Received Barrett Hand Pos message.");
-    /*
-    std::cout << "Cur_Sta: ";
-    std::cout << hand_state[0] << ", ";
-    std::cout << hand_state[1] << ", ";
-    std::cout << hand_state[2] << ", ";
-    std::cout << hand_state[3] << "\n";
-    std::cout << "Message: ";
-    std::cout << msg.position[0] << ", ";
-    std::cout << msg.position[1] << ", ";
-    std::cout << msg.position[2] << ", ";
-    std::cout << msg.position[3] << "\n";
-    std::cout << "Diff" << std::endl;
-    std::cout << abs(hand_tgt_pos[0] - msg.position[0]) << ", \n";
-    std::cout << abs(hand_tgt_pos[1] - msg.position[1]) << ", \n";
-    std::cout << abs(hand_tgt_pos[2] - msg.position[2]) << ", \n";
-    std::cout << abs(hand_tgt_pos[3] - msg.position[3]) << "\n";
-    */
 
+    /*
     std_msgs::Float64 a; a.data = hand_tgt_pos[0];
     std_msgs::Float64 b; b.data = msg.position[0];
 
     pb_fil.publish(a);
     pb_raw.publish(b);
+     */
 
     try {
         // Very basic haptic logic. Will need further development.
@@ -189,9 +183,11 @@ void handle_controller::hand_pos_callback(const sensor_msgs::JointState &msg) {
                 haptic_effort = 0;
             }
         }
+        if(hand_lock) haptic_effort = 0;
 
         for (int i = 0; i < 4; i++) {
             hand_state[i] = msg.position[i];
+            hand_state_set = true;
         }
     }
     catch (const std::exception& e){
@@ -199,9 +195,11 @@ void handle_controller::hand_pos_callback(const sensor_msgs::JointState &msg) {
     }
 
     // Initialise spread pos at hand's current position.
-    if(spread_pos == 0){
+    /*
+    if( == 0){
         spread_pos = (hand_state[3] < SPREAD_CLOSE_TARGET/2) ? 1 : -1;
     }
+     */
 }
 
 void handle_controller::send_handle_feedback() {
@@ -257,23 +255,24 @@ void handle_controller::process_trigger(int trigger){
     if((trigger < 0) || (trigger > 1023)){
         ROS_ERROR("Received an invalid trigger value: %i", trigger);
     }
-    std_msgs::Float64 test_msg;
-    test_msg.data = (float)(2.1223 / 1023 * (double)trigger);
+
+    //std_msgs::Float64 test_msg;
+    //test_msg.data = (float)(FINGER_CLOSE_TARGET / 1023 * (double)trigger);
     //pb_raw.publish(test_msg);
 
-    float a_test = filtered_trigger.get_median((float)(2.1223 / 1023 * (double)trigger));
+    float value = filtered_trigger.get_median((float)(FINGER_CLOSE_TARGET / 1023 * (double)trigger));
 
-    test_msg.data = a_test;
+    //test_msg.d//ata = a_test;
     //pb_fil.publish(test_msg);
 
-    hand_tgt_pos[0] = a_test;
-    hand_tgt_pos[1] = a_test;
-    hand_tgt_pos[2] = a_test;
+    hand_tgt_pos[0] = value;
+    hand_tgt_pos[1] = value;
+    hand_tgt_pos[2] = value;
 
     // Even if hand is locked we should continue feeding values to the filter.
     wam_srvs::BHandGraspPos srv;
     //srv.request.radians = filtered_trigger.get_median((float)(2.1223 / 1023 * (double)trigger));
-    srv.request.radians = a_test;
+    srv.request.radians = value;
     if(!hand_lock) {
         if(!grasp_client.call(srv)){
             ROS_ERROR("Failed to call service: grasp_pos");
@@ -283,10 +282,31 @@ void handle_controller::process_trigger(int trigger){
 
 
 /// Joystick Logic
-/// Function: Currently there is no functionality for the joystick. In the future,
+/// Function:
 ///           the joystick may be used to control a cursor on the host computer.
 void handle_controller::process_joy(int joy1, int joy2){
-    // consider using filtered trigger
+    if((joy1 < 0) || (joy1 > 256)){
+        ROS_ERROR("Received an invalid trigger value: %i", joy1);
+    }
+    float filt_joy1 = filtered_joy1.get_median(joy1);
+    //float filt_joy2 = filtered_joy2.get_median((float)(SPREAD_CLOSE_TARGET / 255 * (double)joy2));
+
+    float value = hand_tgt_pos[3];
+    if(abs(filt_joy1-256/2) > 256/4 ){
+        value = (float)(sgn(filt_joy1 - 256/2)*SPREAD_RATE/loop_rate) + hand_tgt_pos[3];
+        value = (value > SPREAD_CLOSE_TARGET) ? SPREAD_CLOSE_TARGET : value;
+        value = (value < SPREAD_OPEN_TARGET) ? SPREAD_OPEN_TARGET : value;
+        hand_tgt_pos[3] = (float)value;
+    }
+
+    wam_srvs::BHandSpreadPos srv;
+    srv.request.radians = value;
+
+    if(!hand_lock) {
+        if(!spread_client.call(srv)){
+            ROS_ERROR("Failed to call service: spread_pos.");
+        }
+    }
 }
 
 /// Joystick Button Logic
@@ -297,30 +317,25 @@ void handle_controller::process_joy(int joy1, int joy2){
 /// False - Button is released.
 void handle_controller::process_button_joy(bool button_joy){
     // Trigger toggle on rising edge of button press action with "last_button_joy".
-    if(button_joy && !last_button_joy && !hand_lock && timer_joy.isReady()){
+    if(button_joy && !last_button_joy && !hand_lock && timer_joy.isReady() && hand_state_set){
         timer_joy.set();
         std_srvs::Empty srv;
 
-        if (spread_pos < 0){
+        if (hand_state[3] > SPREAD_CLOSE_TARGET/2){
             if(spread_open_client.call(srv)){
-                spread_pos *= -1;
                 hand_tgt_pos[3] = SPREAD_OPEN_TARGET;
             }
             else {
                 ROS_ERROR("Failed to call service: open_spread");
             }
         }
-        else if (spread_pos > 0){
+        else if (hand_state[3] <= SPREAD_CLOSE_TARGET/2){
             if(spread_close_client.call(srv)){
-                spread_pos *= -1;
                 hand_tgt_pos[3] = SPREAD_CLOSE_TARGET;
             }
             else {
                 ROS_ERROR("Failed to call service: close_spread");
             }
-        }
-        else{
-            ROS_INFO("No position message has been received. Push button will be ignored.");
         }
     }
     last_button_joy = button_joy;
@@ -341,8 +356,6 @@ void handle_controller::process_button_push(bool button_push){
         hand_lock = !hand_lock;
         handle_led_set = !handle_led_set;
     }
-    std::cout << "button is push: " << ((last_button_push) ? "True\n" : "False\n");
-    std::cout << "timer is ready: " << ((timer_push.isReady()) ? "True\n" : "False\n");
     last_button_push = button_push;
 }
 
@@ -386,24 +399,37 @@ void handle_controller::unpack_reply(struct can_frame *packet){
     }
      */
     hand_tgt_set = true;
-    handle_state_pub.publish(handle_state);
 
     process_button_push((bool)handle_state.button_push);
+    process_button_joy((bool)handle_state.button_joy);
     process_trigger(handle_state.trigger);
     process_joy(handle_state.joy1, handle_state.joy2);
-    process_button_joy((bool)handle_state.button_joy);
+
+    std_msgs::Float64MultiArray tgt_msg;
+    tgt_msg.data.resize(4);
+    std_msgs::Float64 hap_msg;
+
+    if(hand_tgt_set){
+        for(int i=0; i<4; i++){ tgt_msg.data[i] = hand_tgt_pos[i]; }
+        hap_msg.data = haptic_effort;
+    }
+
+    handle_state_pub.publish(handle_state);
+    hand_tgt_pub.publish(tgt_msg);
+    handle_haptic_effort.publish(hap_msg);
 
 }
 
-bool handle_controller::start(int rate) {
-    ros::Rate loop_rate(rate);
+bool handle_controller::start() {
+    nh.param<double>("loop_rate", loop_rate, 100);
+    ros::Rate rate(loop_rate);
     ROS_INFO("Node started");
 
     while(ros::ok()){
         send_handle_feedback();
 
         ros::spinOnce();
-        loop_rate.sleep();
+        rate.sleep();
     }
 }
 
@@ -411,7 +437,7 @@ int main(int argc, char **argv){
     ros::init(argc, argv, "handle_controller");
     try{
         handle_controller handle("can0");
-        handle.start(100);
+        handle.start();
     }catch(const std::exception &e){
         std::cout<< "\033[1;31m[ERROR] An exception was caught, with message: ";
         std::cout<< e.what() << std::endl;

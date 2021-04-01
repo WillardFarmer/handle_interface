@@ -1,0 +1,15 @@
+<launch>
+  <!--node name="port_setup" pkg="handle_interface" type="port_setup.sh" /-->
+  <node pkg="handle_interface" type="handle_controller" name="handle_controller" output="screen" respawn="false">
+    <param name="loop_rate" value="100" />
+  </node>
+  <node pkg="handle_interface" type="handle_sim" name="handle_sim" output="screen" required="true" respawn="false">
+    <rosparam>
+      j11: 3.14157
+      j21: 3.14157
+      j12: 3
+      j22: 3
+      j32: 3
+    </rosparam>
+  </node>
+</launch>

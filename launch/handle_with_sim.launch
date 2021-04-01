@@ -1,5 +1,0 @@
-<launch>
-	<node name="port_setup" pkg="handle_interface" type="port_setup.sh" />
-	<node pkg="handle_interface" type="handle_controller" name="handle_controller" output="screen" respawn="false"/>
-	<node pkg="handle_interface" type="handle_sim" name="handle_sim" output="log" respawn="false"/>
-</launch>
