@@ -12,6 +12,8 @@
 #sudo slcand -o -c -s6 $CanPort can0
 #sudo slcand -o -c -s6 /dev/ttyACM12 can0
 sudo slcand -o -c -s6 CANable1 can0
+sleep 0.5
 sudo ifconfig can0 up
+sleep 0.5
 sudo ifconfig can0 txqueuelen 1000
 
